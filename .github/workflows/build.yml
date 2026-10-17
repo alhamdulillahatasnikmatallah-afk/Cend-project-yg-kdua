@@ -1,0 +1,64 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract zip proyek
+        run: |
+          ZIP=$(ls *.zip | head -n 1)
+          echo "Zip: $ZIP"
+          unzip -q "$ZIP" -d _src
+          cd _src
+          DIR=$(find . -maxdepth 2 -name pubspec.yaml -printf '%h\n' | head -n 1)
+          echo "PROJECT_DIR=$(realpath "$DIR")" >> $GITHUB_ENV
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate folder android
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          mkdir -p /tmp/keep
+          cp -r lib /tmp/keep/lib
+          cp pubspec.yaml /tmp/keep/pubspec.yaml
+          flutter create --platforms=android --org com.cend --project-name cend_balloon .
+          rm -rf lib
+          cp -r /tmp/keep/lib lib
+          cp /tmp/keep/pubspec.yaml pubspec.yaml
+          rm -rf test
+
+      - name: Patch Android (izin overlay, minSdk 23)
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: python3 tool/patch_android.py
+
+      - name: Install dependencies
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter pub get
+
+      - name: Build APK universal 32+64 bit
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter build apk --release --target-platform android-arm,android-arm64
+
+      - name: Build APK per-arsitektur
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: flutter build apk --release --split-per-abi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cend-balloon-apk
+          path: ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/*.apk
